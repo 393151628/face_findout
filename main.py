@@ -13,6 +13,7 @@ UPLOAD_PATH = '/data/img/upload'
 VIDEO_IMG_PATH = '/data/img/tmp'
 VIDEO_LIST_PATH = ['rtsp://172.31.34.43/stream1']
 
+
 @app.route('/api/upload', methods=['POST', 'GET'])
 def uploads():
     if request.method == 'POST':
@@ -21,7 +22,6 @@ def uploads():
         upload_path = os.path.join(UPLOAD_PATH, str(t) + '_' + f.filename)
         f.save(upload_path)
         return upload_path
-
 
 
 @app.route('/api/video_list', methods=['POST', 'GET'])
@@ -46,7 +46,7 @@ def get_video_img(v):
         ret, frame = cap.read()
         ip = v.split('/')[2]
         ip_int = socket.ntohl(struct.unpack("I", socket.inet_aton(str(ip)))[0])
-        path = os.path.join(VIDEO_IMG_PATH, '_', ip_int, '_', 'a.jpg' )
+        path = os.path.join(VIDEO_IMG_PATH, '_', ip_int, '_', 'a.jpg')
         res = cv2.imwrite(path, frame)
 
         cap.release()
