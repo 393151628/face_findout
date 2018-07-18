@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import asyncio
 import os
 import datetime
 import socket
@@ -9,31 +10,20 @@ import cv2
 import numpy
 import struct
 import tornado.options
-from tornado.web import RequestHandler
+from tornado.web import RequestHandler, asynchronous
+from tornado import gen
 from tornado.options import define, options
 from tornado.websocket import WebSocketHandler
 from tornado.escape import json_decode, json_encode
 # from mtcnn.mtcnn import MTCNN
 import face_recognition
+from config import *
+from my_celery_task import video_loop_handle
+import threading
 
-BASE_PATH = r'/home/zhangyb'
-UPLOAD_PATH = BASE_PATH + '/data/img/upload'
-VIDEO_IMG_PATH = BASE_PATH + '/data/tmps'
-RESULT_IMG_PATH = BASE_PATH + '/data/result'
-VIDEO_FILE_PATH = BASE_PATH + '/data/video'
-VIDEO_LIST_PATH = [
-    {
-        'title': '1号楼道',
-        'tunnel1': 'rtsp://172.31.44.69/stream1',
-        'tunnel2': 'rtsp://172.31.44.69/stream2',
-        'id': 'abc',
-    }
-]
-STORAGE_PATH = 'http://172.31.44.56:8000'
 # detector = MTCNN()
 # 比检测位置向外扩一些
-t = 0
-time_interval = 10
+
 
 define("port", default=8001, type=int)
 
@@ -43,107 +33,119 @@ define("port", default=8001, type=int)
 
 class ConnectWSHandler(WebSocketHandler):
     socket_handler = set()  # 用来存放在线用户的容器
-    switch = True
+    socket_res_dict = {}
+    socket_thread_dict = {}
 
     def open(self):
         print('connect!')
         self.socket_handler.add(self)
+        self.socket_res_dict[self] = []
+        self.socket_thread_dict[self] = []
         print('socket_handler:', self.socket_handler)
 
-    async def on_message(self, message):
+    def on_message(self, message):
         data = json_decode(message)
         # data: {'img': ['img1.jpg', 'img2.jpg'], 'video': ['tunel1', 'tunel2']}
         # print('data:', data)
-        s = time.time()
-        face_encodings_knows = img_encoding(data['img'])
-        e = time.time()
         # print('img_encoding:', e - s)
-        if face_encodings_knows:
-            for url in data['video']:
-                await  self.video_find_out(url, face_encodings_knows, data['img'])
-                print('当前连接数：', len(self.socket_handler))
-        else:
-            self.write_message('上传图片未检测出人脸！')
-            self.socket_handler.remove(self)
-            self.close()
+        for url in data['video']:
+            # self.video_find_out(url, face_encodings_knows, data['img'])
+            res = video_loop_handle.apply_async(args=[url, data['img']])
+            self.socket_res_dict[self].append(res)
+            t = MyThread(self, res)
+            t.start()
+            self.socket_thread_dict[self].append(t)
+            print('当前连接数：', len(self.socket_handler))
 
     def on_close(self):
         print('close!')
-        self.switch = False
+        for r in self.socket_res_dict[self]:
+            r.revoke(terminate=True)
+
+        for t in self.socket_thread_dict[self]:
+            t.switch = False
         self.socket_handler.remove(self)
+        self.socket_res_dict.pop(self)
+        self.socket_thread_dict.pop(self)
         print('socket_handler:', self.socket_handler)
 
     def check_origin(self, origin):
         return True  # 允许WebSocket的跨域请求
 
-    def video_find_out(self, url, face_encodings_knows, imgs):
-        cap = cv2.VideoCapture(url)
-        timer = 0
-        print('########')
-        while cap.isOpened() and self.switch:
-            ok, frame = cap.read()  # 读取一帧数据
-            timer += 1
-            # print('timer:', timer)
-            if not ok:
-                break
-            if timer % time_interval == 0:
-                # Convert the image from BGR color (which OpenCV uses) to RGB color (which face_recognition uses)
-                rgb_frame = frame[:, :, ::-1]
-                s = time.time()
-                # faceRects = detector.detect_faces(rgb_frame)
-                # faceRects = face_recognition.face_locations(rgb_frame)
-                faceRects = face_recognition.face_locations(rgb_frame, number_of_times_to_upsample=0, model="cnn")
-                e = time.time()
-                # print('detect:', float('%.5f' % (e - s)))
-                if len(faceRects) > 0:
-                    # x, y, w, h = faceRects[0]['box']
-                    # for faceRect in faceRects:
-                    # top, right, bottom, left = faceRect
-                    s = time.time()
-                    # face_encodings = face_recognition.face_encodings(rgb_frame[y - t: y + h + t, x - t: x + w + t])
-                    face_encodings = face_recognition.face_encodings(rgb_frame, faceRects)
-                    e = time.time()
-                    # print('face_encodings:', float('%.5f' % (e - s)), '------', len(face_encodings))
-                    # if len(face_encodings) == 0:
-                    #     cv2.imwrite('/home/zhangyb/tmp/test.jpg', frame)
-                    #     cv2.imwrite('/home/zhangyb/tmp/test22.jpg', rgb_frame[top:bottom, left:right])
-                    #     break
-                    for face_encoding in face_encodings:
-                    # if len(face_encodings) != 0 and face_encodings_knows:
-                    #     face_encoding = face_encodings[0]
-                        s = time.time()
-                        face_res = face_recognition.face_distance(face_encodings_knows, face_encoding)
-                        e = time.time()
-                        # print('face_distance:', float('%.5f' % (e - s)))
-                        k = face_res.min()
-                        f = face_res.argmin()
-                        print('kkkkkk:', k)
-                        if k < 0.4:
-                            uid = str(uuid.uuid1())
-                            time_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            result_path = os.path.join(RESULT_IMG_PATH, uid + '_' + 'result.jpg')
-                            cv2.imwrite(result_path, frame)
-                            data = {'title': v['title'] for v in VIDEO_LIST_PATH if v['tunnel1'] == url}
-                            data['url'] = url
-                            data['img'] = int(f)
-                            data['path'] = STORAGE_PATH + imgs[int(f)].replace(BASE_PATH, '')
-                            data['time_str'] = time_str
-                            data['result_path'] = STORAGE_PATH + result_path.replace(BASE_PATH, '')
-                            print('data:', data)
-                            self.write_message(json_encode(data))
+    # def video_find_out(self, url, face_encodings_knows, imgs):
+    #     cap = cv2.VideoCapture(url)
+    #     timer = 0
+    #     print('########')
+    #     while cap.isOpened() and self.switch:
+    #         ok, frame = cap.read()  # 读取一帧数据
+    #         timer += 1
+    #         # print('timer:', timer)
+    #         if not ok:
+    #             break
+    #         if timer % time_interval == 0:
+    #             # Convert the image from BGR color (which OpenCV uses) to RGB color (which face_recognition uses)
+    #             rgb_frame = frame[:, :, ::-1]
+    #             s = time.time()
+    #             # faceRects = detector.detect_faces(rgb_frame)
+    #             # faceRects = face_recognition.face_locations(rgb_frame)
+    #             faceRects = face_recognition.face_locations(rgb_frame, number_of_times_to_upsample=0, model="cnn")
+    #             e = time.time()
+    #             # print('detect:', float('%.5f' % (e - s)))
+    #             if len(faceRects) > 0:
+    #                 # x, y, w, h = faceRects[0]['box']
+    #                 # for faceRect in faceRects:
+    #                 # top, right, bottom, left = faceRect
+    #                 s = time.time()
+    #                 # face_encodings = face_recognition.face_encodings(rgb_frame[y - t: y + h + t, x - t: x + w + t])
+    #                 face_encodings = face_recognition.face_encodings(rgb_frame, faceRects)
+    #                 e = time.time()
+    #                 # print('face_encodings:', float('%.5f' % (e - s)), '------', len(face_encodings))
+    #                 # if len(face_encodings) == 0:
+    #                 #     cv2.imwrite('/home/zhangyb/tmp/test.jpg', frame)
+    #                 #     cv2.imwrite('/home/zhangyb/tmp/test22.jpg', rgb_frame[top:bottom, left:right])
+    #                 #     break
+    #                 for face_encoding in face_encodings:
+    #                 # if len(face_encodings) != 0 and face_encodings_knows:
+    #                 #     face_encoding = face_encodings[0]
+    #                     s = time.time()
+    #                     face_res = face_recognition.face_distance(face_encodings_knows, face_encoding)
+    #                     e = time.time()
+    #                     # print('face_distance:', float('%.5f' % (e - s)))
+    #                     k = face_res.min()
+    #                     f = face_res.argmin()
+    #                     print('kkkkkk:', k)
+    #                     if k < 0.4:
+    #                         uid = str(uuid.uuid1())
+    #                         time_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    #                         result_path = os.path.join(RESULT_IMG_PATH, uid + '_' + 'result.jpg')
+    #                         cv2.imwrite(result_path, frame)
+    #                         data = {'title': v['title'] for v in VIDEO_LIST_PATH if v['tunnel1'] == url}
+    #                         data['url'] = url
+    #                         data['img'] = int(f)
+    #                         data['path'] = STORAGE_PATH + imgs[int(f)].replace(BASE_PATH, '')
+    #                         data['time_str'] = time_str
+    #                         data['result_path'] = STORAGE_PATH + result_path.replace(BASE_PATH, '')
+    #                         print('data:', data)
+    #                         self.write_message(json_encode(data))
 
 
-def img_encoding(imgs):
-    result = []
-    for img in imgs:
-        frame = face_recognition.load_image_file(img)
-        face_locations = face_recognition.face_locations(frame,number_of_times_to_upsample=0, model="cnn")
-        if len(face_locations) > 0:
-            face_encoding = face_recognition.face_encodings(frame, face_locations)[0]
-            result.append(face_encoding)
-        else:
-            result.append(numpy.array((0,0,0)))
-    return result
+class MyThread(threading.Thread):
+
+    def __init__(self, wbconn, celres):
+        threading.Thread.__init__(self)  # 初始化父类Thread
+        self.wbconn = wbconn
+        self.celres = celres
+        self.switch = True
+
+    def run(self):
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        self.celres.get(on_message=self.send_data, propagate=False)
+
+    def send_data(self, body):
+        if self.switch:
+            print('send_data start!')
+            self.wbconn.write_message(body)
+            print('send message')
 
 
 class FileUploadHandler(RequestHandler):
@@ -253,9 +255,9 @@ class FileHandler(RequestHandler):
         print(data, '#######################')
         self.write('OK')
 
+
 def find_video_file():
     return []
-
 
 
 app = tornado.web.Application([
@@ -272,4 +274,4 @@ if __name__ == '__main__':
 
     http_server = tornado.httpserver.HTTPServer(app)
     http_server.listen(options.port)
-    tornado.ioloop.IOLoop.current().start()
+    tornado.ioloop.IOLoop.instance().start()
