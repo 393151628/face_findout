@@ -20,15 +20,46 @@ import face_recognition
 from config import *
 from my_celery_task import video_loop_handle
 import threading
+from decryption import Dencryption
+from hashlib import sha1
 
 # detector = MTCNN()
 # 比检测位置向外扩一些
-
 
 define("port", default=8001, type=int)
 
 
 # .\ffmpeg.exe -y -i .\hamilton_clip.mp4 -ss 00:0:30.0 -t 00:01:00.0 -acodec copy -vcodec copy -async 1 bjysxyt1.mp4
+
+
+def init_args():
+    global key
+    global dencryption
+    dencryption = Dencryption()
+    with open('license/miyao.syswin', 'rb') as f:
+        key = f.read().decode('utf8')
+
+
+create_session_id = lambda: sha1(bytes('%s%s' % (os.urandom(16), time.time()), encoding='utf-8')).hexdigest()
+
+
+def check_lisence(func):
+    def warrper(*args, **kwargs):
+        handler = args[0]
+        cookie = handler.get_cookie('lisence')
+        if not cookie:
+            print('##################', cookie)
+            if dencryption.verifykey(key) == 1:
+                random_str = create_session_id()
+                handler.set_cookie('lisence', random_str, max_age=60)
+                func(*args, **kwargs)
+            else:
+                handler.render('demo.html')
+            # args[0].write('need buy')
+        else:
+            func(*args, **kwargs)
+
+    return warrper
 
 
 class ConnectWSHandler(WebSocketHandler):
@@ -154,7 +185,7 @@ class FileUploadHandler(RequestHandler):
     #     self.set_header("Access-Control-Allow-Origin", "*")  # 这个地方可以写域名
     #     self.set_header("Access-Control-Allow-Headers", "x-requested-with")
     #     self.set_header('Access-Control-Allow-Methods', '*')
-
+    @check_lisence
     def get(self):
         self.write('''
 <html>
@@ -250,13 +281,16 @@ class FileHandler(RequestHandler):
         start = data.get('start')
         end = data.get('end')
         img = data.get('img')
+        os.listdir()
         video_files = find_video_file()
         #
         print(data, '#######################')
         self.write('OK')
 
 
-def find_video_file():
+def find_video_file(ids, start, end):
+    file_pathes = [VIDEO_FILE_PATH[_id] for _id in ids]
+
     return []
 
 
@@ -270,8 +304,11 @@ app = tornado.web.Application([
 )
 
 if __name__ == '__main__':
-    # tornado.options.parse_command_line()
-
+    try:
+        init_args()
+    except Exception:
+        print('init error')
+    tornado.options.parse_command_line()
     http_server = tornado.httpserver.HTTPServer(app)
     http_server.listen(options.port)
     tornado.ioloop.IOLoop.instance().start()
