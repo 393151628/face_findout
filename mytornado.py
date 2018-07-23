@@ -7,21 +7,18 @@ import uuid
 import time
 
 import cv2
-import numpy
 import struct
 import tornado.options
-from tornado.web import RequestHandler, asynchronous
-from tornado import gen
+from tornado.web import RequestHandler
 from tornado.options import define, options
 from tornado.websocket import WebSocketHandler
 from tornado.escape import json_decode, json_encode
-# from mtcnn.mtcnn import MTCNN
-import face_recognition
 from config import *
 from my_celery_task import video_loop_handle
 import threading
 from decryption import Dencryption
 from hashlib import sha1
+import face_recognition
 
 # detector = MTCNN()
 # 比检测位置向外扩一些
@@ -36,11 +33,13 @@ def init_args():
     global key
     global dencryption
     dencryption = Dencryption()
-    with open('license/miyao.syswin', 'rb') as f:
+    with open(LISENCE_PATH, 'rb') as f:
         key = f.read().decode('utf8')
 
 
-create_session_id = lambda: sha1(bytes('%s%s' % (os.urandom(16), time.time()), encoding='utf-8')).hexdigest()
+# create_session_id = lambda: sha1(bytes('%s%s' % (os.urandom(16), time.time()), encoding='utf-8')).hexdigest()
+def create_session_id():
+    return sha1(bytes('%s%s' % (os.urandom(16), time.time()), encoding='utf-8')).hexdigest()
 
 
 def check_lisence(func):
@@ -77,16 +76,24 @@ class ConnectWSHandler(WebSocketHandler):
     def on_message(self, message):
         data = json_decode(message)
         # data: {'img': ['img1.jpg', 'img2.jpg'], 'video': ['tunel1', 'tunel2']}
-        # print('data:', data)
+        print('data:', data)
         # print('img_encoding:', e - s)
-        for url in data['video']:
-            # self.video_find_out(url, face_encodings_knows, data['img'])
-            res = video_loop_handle.apply_async(args=[url, data['img']])
-            self.socket_res_dict[self].append(res)
-            t = MyThread(self, res)
+        if data['type'] == 'file':
+            img = ['/home/zhangyb/data/video/imp.jpg']
+            file = '/home/zhangyb/data/video/aaa.mp4'
+            ret = video_loop_handle.apply_async(args=[file, img])
+            t = MyThread(self, ret)
             t.start()
             self.socket_thread_dict[self].append(t)
-            print('当前连接数：', len(self.socket_handler))
+        else:
+            for url in data['video']:
+                # self.video_find_out(url, face_encodings_knows, data['img'])
+                res = video_loop_handle.apply_async(args=[url, data['img']])
+                self.socket_res_dict[self].append(res)
+                t = MyThread(self, res)
+                t.start()
+                self.socket_thread_dict[self].append(t)
+                print('当前连接数：', len(self.socket_handler))
 
     def on_close(self):
         print('close!')
@@ -201,6 +208,8 @@ class FileUploadHandler(RequestHandler):
 
     def post(self):
         ret = []
+        import pydevd
+        pydevd.settrace('172.31.43.50', port=11111, stdoutToServer=True, stderrToServer=True)
         file_metas = self.request.files.get('file', None)  # 提取表单中‘name’为‘file’的文件元数据
 
         if not file_metas:
@@ -275,23 +284,22 @@ class FileHandler(RequestHandler):
         self.write(json_encode(result))
         self.finish()
 
+
+class CompareImg(RequestHandler):
     def post(self):
-        data = json_decode(self.request.body)
-        ids = data.get('ids')
-        start = data.get('start')
-        end = data.get('end')
-        img = data.get('img')
-        os.listdir()
-        video_files = find_video_file()
-        #
-        print(data, '#######################')
-        self.write('OK')
+        # data = json_decode(self.request.body)
+        img = self.request.files.get('img', None)
+        imgs = self.request.files.get('imgs', None)
+        frame = face_recognition.load_image_file(img)
+        face_locations = face_recognition.face_locations(img, number_of_times_to_upsample=0, model="cnn")
+        face_recognition.face_encodings()
 
 
-def find_video_file(ids, start, end):
-    file_pathes = [VIDEO_FILE_PATH[_id] for _id in ids]
 
-    return []
+def find_video_file():
+    # file_pathes = [VIDEO_FILE_PATH[_id] for _id in ids]
+
+    return ['/home/zhangyb/data/video/aaa.mp4']
 
 
 app = tornado.web.Application([

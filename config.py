@@ -18,3 +18,5 @@ VIDEO_LIST_PATH = [
 
 STORAGE_PATH = 'http://172.31.43.49:8000'
 time_interval = 10
+
+LISENCE_PATH = 'license/miyao.syswin'
