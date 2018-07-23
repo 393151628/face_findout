@@ -19,6 +19,9 @@ import threading
 from decryption import Dencryption
 from hashlib import sha1
 import face_recognition
+from io import BytesIO
+from PIL import Image
+import numpy as np
 
 # detector = MTCNN()
 # 比检测位置向外扩一些
@@ -208,8 +211,6 @@ class FileUploadHandler(RequestHandler):
 
     def post(self):
         ret = []
-        import pydevd
-        pydevd.settrace('172.31.43.50', port=11111, stdoutToServer=True, stderrToServer=True)
         file_metas = self.request.files.get('file', None)  # 提取表单中‘name’为‘file’的文件元数据
 
         if not file_metas:
@@ -290,15 +291,46 @@ class CompareImg(RequestHandler):
         # data = json_decode(self.request.body)
         img = self.request.files.get('img', None)
         imgs = self.request.files.get('imgs', None)
-        frame = face_recognition.load_image_file(img)
-        face_locations = face_recognition.face_locations(img, number_of_times_to_upsample=0, model="cnn")
-        face_recognition.face_encodings()
+        unknow_frame = convert_binary_to_numpy(img)
+        result = {
+            'status', 'OK',
+        }
+        unknow_face_locations = find_face_location(unknow_frame)
+        if len(unknow_face_locations) == 0:
+            result['status'] = 'error'
+            result['msg'] = 'not fount face in single img'
+        else:
+            know_encodings = []
+            for _img in imgs:
+                know_frame = convert_binary_to_numpy(_img)
+                know_face_locations = find_face_location(know_frame)
+                know_encodings.extend(face_recognition.face_encodings(know_frame, know_face_locations))
 
+            unknow_encondings = face_recognition.face_encodings(unknow_frame, [unknow_face_locations[0]])
+            compare_ret = face_recognition.face_distance(know_encodings, unknow_encondings[0])
+            k = compare_ret.min()
+            if k <= 0.4:
+                result['result'] = True
+            else:
+                result['result'] = False
+
+        self.write(json_encode(result))
+        self.finish()
+
+
+def find_face_location(frame):
+    face_locations = face_recognition.face_locations(frame, number_of_times_to_upsample=0, model="cnn")
+    return face_locations
+
+
+def convert_binary_to_numpy(bes):
+    io = BytesIO(bes)
+    img = Image.open(io)
+    return np.array(img)
 
 
 def find_video_file():
     # file_pathes = [VIDEO_FILE_PATH[_id] for _id in ids]
-
     return ['/home/zhangyb/data/video/aaa.mp4']
 
 
@@ -307,6 +339,7 @@ app = tornado.web.Application([
     (r"/api/upload", FileUploadHandler),
     (r"/api/video_list", VideoHandler),
     (r"/api/file_list", FileHandler),
+    (r"/api/compare_img", CompareImg),
 ],
     debug=True
 )
