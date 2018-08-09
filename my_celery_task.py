@@ -98,7 +98,7 @@ def img_encoding(imgs, face_recognition):
 
 def worker_start():
     worker = celery_worker.worker(app=app)
-    worker.run(broker=broker, concurrency=4,
+    worker.run(broker=BROKER, concurrency=4,
                traceback=False, loglevel='INFO')
 
 
