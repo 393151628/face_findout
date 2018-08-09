@@ -20,3 +20,6 @@ STORAGE_PATH = 'http://172.31.43.49:8000'
 time_interval = 10
 
 LISENCE_PATH = 'license/miyao.syswin'
+
+BROKER = 'redis://172.31.43.49:6379/0'
+BACKEND = 'redis://172.31.43.49:6379/1'

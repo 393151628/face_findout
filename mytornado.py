@@ -309,8 +309,9 @@ class CompareImg(RequestHandler):
             unknow_encondings = face_recognition.face_encodings(unknow_frame, [unknow_face_locations[0]])
             compare_ret = face_recognition.face_distance(know_encodings, unknow_encondings[0])
             k = compare_ret.min()
+            idx = compare_ret.argmin()
             if k <= 0.4:
-                result['result'] = True
+                result['result'] = idx
             else:
                 result['result'] = False
 

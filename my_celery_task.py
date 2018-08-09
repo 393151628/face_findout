@@ -6,17 +6,15 @@ import os
 import numpy
 from celery import Celery
 from celery.bin import worker as celery_worker
-import time
-import redis
 import cv2
 
 import uuid
 from config import *
 
 # broker = 'amqp://admin:admin@172.31.43.49/mytest'
-broker = 'redis://172.31.43.49:6379/0'
-backend = 'redis://172.31.43.49:6379/1'
-app = Celery('my_celery_task',  broker=broker, backend=backend)
+# broker = 'redis://172.31.43.49:6379/0'
+# backend = 'redis://172.31.43.49:6379/1'
+app = Celery('my_celery_task',  broker=BROKER, backend=BACKEND)
 
 # pool = redis.ConnectionPool(host='172.28.50.91', port=6379, db=2)
 
